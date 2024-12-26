@@ -17,6 +17,11 @@ import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 from coolname import generate_slug
 from time import time
+from argparse import ArgumentParser
+
+DOMAIN_RANDOMIZATION = True
+NUM_FRAMES = 10
+
 
 def env_builder(domain_randomization=DOMAIN_RANDOMIZATION, normalize_reward=True):
     env = HIVPatient(domain_randomization=domain_randomization)
@@ -28,14 +33,19 @@ def env_builder(domain_randomization=DOMAIN_RANDOMIZATION, normalize_reward=True
     env = FrameStackObservation(env, NUM_FRAMES)
     return env
 
-def train_model():
+
+def train_model(num_steps, exp_name):
     env = env_builder(domain_randomization=DOMAIN_RANDOMIZATION, normalize_reward=True)
-    wandb.init(project="mva-rl-assignment-Butanium", name=exp_name, sync_tensorboard=True)
+    wandb.init(
+        project="mva-rl-assignment-Butanium", name=exp_name, sync_tensorboard=True
+    )
     model = PPO(
         "MlpPolicy", env, verbose=1, tensorboard_log=f"logs/{exp_name}", batch_size=1024
     )
     try:
-        model.learn(total_timesteps=1_000_000, progress_bar=True, callback=WandbCallback())
+        model.learn(
+            total_timesteps=num_steps, progress_bar=True, callback=WandbCallback()
+        )
     except Exception as e:
         print("Error during training")
         print(e)
@@ -43,7 +53,8 @@ def train_model():
         model.save(f"models/{exp_name}")
     return model
 
-def test_model(model, n_eval_episodes=5):
+
+def test_model(model, n_eval_episodes=5, exp_name=None):
     env = env_builder(domain_randomization=False, normalize_reward=False)
     ep_rewards_deterministic, _ = evaluate_policy(
         model, env, n_eval_episodes=n_eval_episodes, return_episode_rewards=True
@@ -108,7 +119,8 @@ def test_model(model, n_eval_episodes=5):
     )
     fig.write_html(f"plots/{exp_name}.html")
 
-def simulate_model(model):
+
+def simulate_model(model, exp_name):
     env = env_builder(domain_randomization=False, normalize_reward=False)
     obs, _ = env.reset()
     done = False
@@ -121,13 +133,24 @@ def simulate_model(model):
         total_reward += reward
         all_rewards.append(reward)
     print(f"Total reward: {total_reward}")
-    plt.hist(all_rewards, bins=30)  # Increased the number of bins for better granularity
+    plt.hist(
+        all_rewards, bins=30
+    )  # Increased the number of bins for better granularity
     plt.savefig(f"plots/{exp_name}_rewards.png")
 
+
 if __name__ == "__main__":
-    NUM_FRAMES = 10
-    DOMAIN_RANDOMIZATION = True
-    exp_name = "ppo_mlp_randomized_" + str(int(time())) + "_" + generate_slug(words=2)
-    model = train_model()
-    test_model(model)
-    simulate_model(model)
+    parser = ArgumentParser()
+    parser.add_argument("--num-frames", type=int, default=10)
+    parser.add_argument("--domain-randomization", type=bool, default=True)
+    parser.add_argument(
+        "--exp-name",
+        type=str,
+        default="ppo_mlp_randomized_" + str(int(time())) + "_" + generate_slug(words=2),
+    )
+    parser.add_argument("--normalize-reward", type=bool, default=True)
+    parser.add_argument("--n-eval-episodes", type=int, default=5)
+    args = parser.parse_args()
+    model = train_model(args.num_steps, args.exp_name)
+    test_model(model, args.n_eval_episodes, args.exp_name)
+    simulate_model(model, args.exp_name)
