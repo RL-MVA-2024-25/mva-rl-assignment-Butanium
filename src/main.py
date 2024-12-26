@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import numpy as np
 import torch
-
+from argparse import ArgumentParser
 from evaluate import evaluate_HIV, evaluate_HIV_population
 from train import ProjectAgent  # Replace DummyAgent with your agent implementation
 
@@ -20,11 +20,15 @@ def seed_everything(seed: int = 42):
 
 
 if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument("--use-lstm", action="store_true")
+    parser.add_argument("--model-name", type=str, default=None)
+    args = parser.parse_args()
     file = Path("score.txt")
     if not file.is_file():
         seed_everything(seed=42)
         # Initialization of the agent. Replace DummyAgent with your custom agent implementation.
-        agent = ProjectAgent()
+        agent = ProjectAgent(use_lstm=args.use_lstm, model_name=args.model_name)
         agent.load()
         # Evaluate agent and write score.
         score_agent: float = evaluate_HIV(agent=agent, nb_episode=5)

@@ -1,0 +1,1 @@
+python src/main.py && pytest src/grading.py

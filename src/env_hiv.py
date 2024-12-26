@@ -1,6 +1,6 @@
 import gymnasium as gym
 import numpy as np
-
+from gymnasium.envs.registration import EnvSpec
 
 class HIVPatient(gym.Env):
     """HIV patient simulator
@@ -14,6 +14,7 @@ class HIVPatient(gym.Env):
         self, clipping=True, logscale=False, domain_randomization: bool = False
     ):
         super(HIVPatient, self).__init__()
+        self.spec = EnvSpec("HIVPatient-v0")
 
         self.domain_randomization = domain_randomization
         self.action_space = gym.spaces.Discrete(4)
@@ -206,7 +207,7 @@ class HIVPatient(gym.Env):
     def transition(self, state, action, duration):
         """duration should be a multiple of 1e-3"""
         state0 = np.copy(state)
-        state0_orig = np.copy(state)
+        # state0_orig = np.copy(state)
         nb_steps = int(duration // 1e-3)
         for i in range(nb_steps):
             der = self.der(state0, action)

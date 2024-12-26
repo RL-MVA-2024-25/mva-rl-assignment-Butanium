@@ -2,7 +2,7 @@ from statistics import mean
 from functools import partial
 import gymnasium as gym
 from gymnasium.wrappers import TimeLimit
-
+from tqdm import trange
 from env_hiv import HIVPatient
 from interface import Agent
 
@@ -20,7 +20,7 @@ def evaluate_agent(agent: Agent, env: gym.Env, nb_episode: int = 10) -> float:
         float: The mean reward of the agent over the episodes.
     """
     rewards: list[float] = []
-    for _ in range(nb_episode):
+    for _ in trange(nb_episode):
         obs, info = env.reset()
         done = False
         truncated = False
