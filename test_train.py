@@ -150,6 +150,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--normalize-reward", type=bool, default=True)
     parser.add_argument("--n-eval-episodes", type=int, default=5)
+    parser.add_argument("--num-steps", type=int, default=1_000_000)
     args = parser.parse_args()
     model = train_model(args.num_steps, args.exp_name)
     test_model(model, args.n_eval_episodes, args.exp_name)
