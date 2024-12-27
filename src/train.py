@@ -56,8 +56,12 @@ class LatestActionWrapper(Wrapper):
         self.one_hot_action = one_hot_action
         # Update observation space to include action
         if one_hot_action:
-            low = np.concatenate([low, np.zeros(env.action_space.n)])
-            high = np.concatenate([high, np.ones(env.action_space.n)])
+            low = np.concatenate(
+                [env.observation_space.low, np.zeros(env.action_space.n)]
+            )
+            high = np.concatenate(
+                [env.observation_space.high, np.ones(env.action_space.n)]
+            )
         else:
             low = np.append(env.observation_space.low, 0)
             high = np.append(env.observation_space.high, env.action_space.n)
