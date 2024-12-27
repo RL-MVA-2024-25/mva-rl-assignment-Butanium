@@ -1,6 +1,7 @@
 from gymnasium.wrappers import TimeLimit
 from gymnasium import Wrapper
 import gymnasium as gym
+
 try:
     from .env_hiv import HIVPatient
 except ImportError:
@@ -36,7 +37,7 @@ def preprocess_observation(
     if add_action:
         if last_action is None:
             last_action = default_action
-        observation = np.concatenate([observation, np.array([last_action])], axis=0)
+        observation = np.concatenate([observation, last_action], axis=0)
     if add_step:
         if num_steps is None:
             num_steps = 0
@@ -49,24 +50,36 @@ def preprocess_observation(
 
 
 class LatestActionWrapper(Wrapper):
-    def __init__(self, env, default_action=0):
+    def __init__(self, env, default_action=0, one_hot_action=False):
         super().__init__(env)
         self.default_action = default_action
+        self.one_hot_action = one_hot_action
         # Update observation space to include action
-        low = np.append(env.observation_space.low, -float("inf"))
-        high = np.append(env.observation_space.high, float("inf"))
+        if one_hot_action:
+            low = np.concatenate([low, np.zeros(env.action_space.n)])
+            high = np.concatenate([high, np.ones(env.action_space.n)])
+        else:
+            low = np.append(env.observation_space.low, 0)
+            high = np.append(env.observation_space.high, env.action_space.n)
         self.observation_space = gym.spaces.Box(
             low=low, high=high, dtype=env.observation_space.dtype
         )
 
+    def preprocess_action(self, action):
+        if self.one_hot_action:
+            actions = np.zeros(self.env.action_space.n)
+            actions[action] = 1
+            return actions
+        return np.array([action])
+
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
-        obs = np.concatenate([obs, np.array([self.default_action])], axis=0)
+        obs = np.concatenate([obs, self.preprocess_action(self.default_action)], axis=0)
         return obs, info
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
-        obs = np.concatenate([obs, np.array([action])], axis=0)
+        obs = np.concatenate([obs, self.preprocess_action(action)], axis=0)
         return obs, reward, terminated, truncated, info
 
 
@@ -80,6 +93,7 @@ class ProjectAgent:
         deterministic=False,
         add_action=True,
         default_action=0,
+        one_hot_action=True,
     ):
         self.use_lstm = use_lstm
         self.model_name = model_name
@@ -92,7 +106,10 @@ class ProjectAgent:
         self.prev_act = None
         self.deterministic = deterministic
         self.add_action = add_action
-        self.default_action = default_action
+        self.default_action = (
+            default_action if not one_hot_action else np.zeros(env.action_space.n)
+        )
+        self.one_hot_action = one_hot_action
         print(
             f"Running agent with: MODEL: {self.model_name}\nLSTM: {self.use_lstm}\nSTACK_SIZE: {self.stack_size}\nADD_STEP: {self.add_step}\nDETERMINISTIC: {self.deterministic}\nADD_ACTION: {self.add_action}\nDEFAULT_ACTION: {self.default_action}"
         )
@@ -131,14 +148,18 @@ class ProjectAgent:
             self.reset()
         observation = self.preprocess_observation(observation)
         act = self.select_action(observation, use_random)
-        self.prev_act = act
+        if self.one_hot_action:
+            self.prev_act = np.zeros(env.action_space.n)
+            self.prev_act[act] = 1
+        else:
+            self.prev_act = act
         return act
 
     def random_action(self):
         return env.action_space.sample()
 
     def save(self, path):
-        pass
+        self.model.save(path)
 
     def load(self):
         if self.model_name is None:
