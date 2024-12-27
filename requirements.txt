@@ -10,3 +10,5 @@ tensorboard
 coolname
 plotly
 matplotlib
+rich
+tqdm
