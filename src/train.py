@@ -1,7 +1,10 @@
 from gymnasium.wrappers import TimeLimit
 from gymnasium import Wrapper
 import gymnasium as gym
-from env_hiv import HIVPatient
+try:
+    from .env_hiv import HIVPatient
+except ImportError:
+    from env_hiv import HIVPatient
 from stable_baselines3 import PPO
 from sb3_contrib import RecurrentPPO
 from pathlib import Path

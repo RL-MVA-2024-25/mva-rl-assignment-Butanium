@@ -23,15 +23,30 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--use-lstm", action="store_true")
     parser.add_argument("--model-name", type=str, default=None)
+    parser.add_argument("--deterministic", action="store_true")
+    parser.add_argument("--name", type=str, default=None)
     args = parser.parse_args()
-    file = Path("score.txt")
+    file = Path(f"score_{args.model_name}.txt")
     if not file.is_file():
         seed_everything(seed=42)
         # Initialization of the agent. Replace DummyAgent with your custom agent implementation.
-        agent = ProjectAgent(use_lstm=args.use_lstm, model_name=args.model_name)
+        agent = ProjectAgent(
+            use_lstm=args.use_lstm,
+            model_name=args.model_name,
+            deterministic=args.deterministic,
+        )
         agent.load()
         # Evaluate agent and write score.
         score_agent: float = evaluate_HIV(agent=agent, nb_episode=5)
+        print(f"Score single agent: {score_agent:.3e}")
         score_agent_dr: float = evaluate_HIV_population(agent=agent, nb_episode=20)
+        print(f"Score population agent: {score_agent_dr:.3e}")
         with open(file="score.txt", mode="w") as f:
             f.write(f"{score_agent}\n{score_agent_dr}")
+        with open(file=file, mode="w") as f:
+            f.write(f"{score_agent:.3e}\n{score_agent_dr:.3e}")
+        # launch pytest on grading.py using pytest import
+        import pytest
+
+        pytest.main(["grading.py"])
+

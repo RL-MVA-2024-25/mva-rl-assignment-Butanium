@@ -18,39 +18,67 @@ import matplotlib.pyplot as plt
 from coolname import generate_slug
 from time import time
 from argparse import ArgumentParser
+from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import SubprocVecEnv
+from functools import partial
+import traceback
 
-DOMAIN_RANDOMIZATION = True
-NUM_FRAMES = 10
-
-
-def env_builder(domain_randomization=DOMAIN_RANDOMIZATION, normalize_reward=True):
+def env_builder(domain_randomization=True, normalize_reward=True, num_frames=10):
     env = HIVPatient(domain_randomization=domain_randomization)
+    env = Monitor(env)
     if normalize_reward:
         env = TransformReward(env, lambda reward: reward / 50000.0)
     env = LatestActionWrapper(env)
     env = TimeLimit(env, max_episode_steps=200)
     env = TimeAwareObservation(env)
-    env = FrameStackObservation(env, NUM_FRAMES)
+    env = FrameStackObservation(env, num_frames)
     return env
 
 
-def train_model(num_steps, exp_name):
-    env = env_builder(domain_randomization=DOMAIN_RANDOMIZATION, normalize_reward=True)
-    wandb.init(
-        project="mva-rl-assignment-Butanium", name=exp_name, sync_tensorboard=True
+def train_model(
+    num_steps,
+    exp_name,
+    device="auto",
+    testing=False,
+    num_envs=5,
+    num_frames=10,
+    domain_randomization=True,
+    normalize_reward=True,
+    checkpoint=None,
+):
+    env = make_vec_env(
+        partial(
+            env_builder,
+            domain_randomization=domain_randomization,
+            normalize_reward=normalize_reward,
+            num_frames=num_frames,
+        ),
+        n_envs=num_envs,
+        vec_env_cls=SubprocVecEnv,
     )
-    model = PPO(
-        "MlpPolicy", env, verbose=1, tensorboard_log=f"logs/{exp_name}", batch_size=1024
-    )
-    try:
-        model.learn(
-            total_timesteps=num_steps, progress_bar=True, callback=WandbCallback()
+    ppo_kwargs = dict(batch_size=64)
+    learn_kwargs = {}
+    if not testing:
+        wandb.init(
+            project="mva-rl-assignment-Butanium", name=exp_name, sync_tensorboard=True
         )
+        ppo_kwargs["tensorboard_log"] = f"logs/{exp_name}"
+        learn_kwargs["callback"] = WandbCallback()
+    model = PPO("MlpPolicy", env, verbose=1, device=device, **ppo_kwargs)
+    if checkpoint is not None:
+        print(f"Loading checkpoint from {checkpoint}")
+        model = PPO.load(checkpoint, env=env, device=device)
+    try:
+        model.learn(total_timesteps=num_steps, progress_bar=True, **learn_kwargs)
     except Exception as e:
         print("Error during training")
-        print(e)
+        # print traceback
+        print(traceback.format_exc())
     finally:
-        model.save(f"models/{exp_name}")
+        if not testing:
+            print(f"Saving model to {exp_name}_{model.num_timesteps}")
+            model.save(f"models/{exp_name}_{model.num_timesteps}")
     return model
 
 
@@ -142,16 +170,35 @@ def simulate_model(model, exp_name):
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--num-frames", type=int, default=10)
-    parser.add_argument("--domain-randomization", type=bool, default=True)
+    parser.add_argument(
+        "--domain-randomization",
+        action="store_false",
+        help="Disable domain randomization",
+    )
     parser.add_argument(
         "--exp-name",
         type=str,
-        default="ppo_mlp_randomized_" + str(int(time())) + "_" + generate_slug(words=2),
+        default="ppo_mlp_randomized_" + str(int(time())) + "_" + generate_slug(2),
     )
     parser.add_argument("--normalize-reward", type=bool, default=True)
     parser.add_argument("--n-eval-episodes", type=int, default=5)
     parser.add_argument("--num-steps", type=int, default=1_000_000)
+    parser.add_argument("--testing", action="store_true")
+    parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--num-envs", type=int, default=5)
+    parser.add_argument("--checkpoint", type=str, default=None)
     args = parser.parse_args()
-    model = train_model(args.num_steps, args.exp_name)
+    print(f"using {args}")
+    model = train_model(
+        args.num_steps,
+        args.exp_name,
+        device=args.device,
+        testing=args.testing,
+        num_envs=args.num_envs,
+        num_frames=args.num_frames,
+        domain_randomization=args.domain_randomization,
+        normalize_reward=args.normalize_reward,
+        checkpoint=args.checkpoint,
+    )
     test_model(model, args.n_eval_episodes, args.exp_name)
     simulate_model(model, args.exp_name)
