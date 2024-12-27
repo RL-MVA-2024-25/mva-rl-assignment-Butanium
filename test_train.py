@@ -1,6 +1,7 @@
 from gymnasium.wrappers import (
     TimeLimit,
     TransformReward,
+    TransformObservation,
     FrameStackObservation,
     TimeAwareObservation,
 )
@@ -27,12 +28,20 @@ import torch as th
 
 
 def env_builder(
-    domain_randomization=True, normalize_reward=True, num_frames=10, one_hot_action=True
+    domain_randomization=True,
+    normalize_reward=True,
+    num_frames=10,
+    one_hot_action=True,
+    normalize_observation=True,
 ):
     env = HIVPatient(domain_randomization=domain_randomization)
     env = Monitor(env)
     if normalize_reward:
         env = TransformReward(env, lambda reward: reward / 50000.0)
+    if normalize_observation:
+        env = TransformObservation(
+            env, lambda obs: np.log(np.maximum(obs, 0) + 1), env.observation_space
+        )
     env = LatestActionWrapper(env, one_hot_action=one_hot_action)
     env = TimeLimit(env, max_episode_steps=200)
     env = TimeAwareObservation(env)
@@ -41,7 +50,10 @@ def env_builder(
 
 
 POLICY_KWARGS = dict(
-    net_arch=[1024, 1024], activation_fn=th.nn.ReLU, ortho_init=False, log_std_init=-2.0
+    net_arch=dict(pi=[256, 256], vf=[256, 256]),
+    activation_fn=th.nn.ReLU,
+    ortho_init=False,
+    log_std_init=-2.0,
 )
 
 
@@ -55,6 +67,7 @@ def train_model(
     domain_randomization=True,
     normalize_reward=True,
     one_hot_action=True,
+    normalize_observation=True,
     checkpoint=None,
 ):
     env = make_vec_env(
@@ -64,6 +77,7 @@ def train_model(
             normalize_reward=normalize_reward,
             num_frames=num_frames,
             one_hot_action=one_hot_action,
+            normalize_observation=normalize_observation,
         ),
         n_envs=num_envs,
         vec_env_cls=SubprocVecEnv if num_envs > 1 else None,
@@ -150,10 +164,38 @@ def test_model(model, n_eval_episodes=5, exp_name=None):
     )
     # 2x2 subplots with histograms of the episode rewards
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=ep_rewards_deterministic, y=np.zeros_like(ep_rewards_deterministic), mode='markers', name='No randomization'))
-    fig.add_trace(go.Scatter(x=ep_rewards_rnd_deterministic, y=np.ones_like(ep_rewards_rnd_deterministic), mode='markers', name='With randomization'))
-    fig.add_trace(go.Scatter(x=ep_rewards_not_deterministic, y=2*np.ones_like(ep_rewards_not_deterministic), mode='markers', name='No randomization not deterministic'))
-    fig.add_trace(go.Scatter(x=ep_rewards_rnd_not_deterministic, y=3*np.ones_like(ep_rewards_rnd_not_deterministic), mode='markers', name='With randomization not deterministic'))
+    fig.add_trace(
+        go.Scatter(
+            x=ep_rewards_deterministic,
+            y=np.zeros_like(ep_rewards_deterministic),
+            mode="markers",
+            name="No randomization",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=ep_rewards_rnd_deterministic,
+            y=np.ones_like(ep_rewards_rnd_deterministic),
+            mode="markers",
+            name="With randomization",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=ep_rewards_not_deterministic,
+            y=2 * np.ones_like(ep_rewards_not_deterministic),
+            mode="markers",
+            name="No randomization not deterministic",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=ep_rewards_rnd_not_deterministic,
+            y=3 * np.ones_like(ep_rewards_rnd_not_deterministic),
+            mode="markers",
+            name="With randomization not deterministic",
+        )
+    )
     fig.update_layout(showlegend=True)
     fig.write_html(f"plots/{exp_name}.html")
 
@@ -195,6 +237,9 @@ if __name__ == "__main__":
         "--no-normalize-reward", action="store_false", dest="normalize_reward"
     )
     parser.add_argument(
+        "--no-normalize-observation", action="store_false", dest="normalize_observation"
+    )
+    parser.add_argument(
         "--no-one-hot-action", action="store_false", dest="one_hot_action"
     )
     parser.add_argument("--n-eval-episodes", type=int, default=5)
@@ -215,6 +260,7 @@ if __name__ == "__main__":
         domain_randomization=args.domain_randomization,
         normalize_reward=args.normalize_reward,
         one_hot_action=args.one_hot_action,
+        normalize_observation=args.normalize_observation,
         checkpoint=args.checkpoint,
     )
     test_model(model, args.n_eval_episodes, args.exp_name)
