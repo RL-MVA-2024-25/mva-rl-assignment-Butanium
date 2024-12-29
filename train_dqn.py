@@ -5,9 +5,10 @@ from gymnasium.wrappers import (
     FrameStackObservation,
     TimeAwareObservation,
 )
-from src.env_hiv import HIVPatient
+# from src.env_hiv import HIVPatient
+from src.env_hiv_fast import FastHIVPatient as HIVPatient
 from src.train import LatestActionWrapper
-from stable_baselines3 import PPO
+from stable_baselines3 import DQN
 import wandb
 from wandb.integration.sb3 import WandbCallback
 from stable_baselines3.common.evaluation import evaluate_policy
@@ -17,11 +18,12 @@ from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 from coolname import generate_slug
+from stable_baselines3.common.vec_env import VecNormalize
 from time import time
 from argparse import ArgumentParser
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import DummyVecEnv
 from functools import partial
 import traceback
 import torch as th
@@ -37,13 +39,9 @@ def env_builder(
     num_frames=10,
     one_hot_action=True,
     normalize_observation=True,
-    num_envs=1,
 ):
     env = HIVPatient(domain_randomization=domain_randomization)
     env = Monitor(env)
-    if normalize_reward:
-        # env = TransformReward(env, lambda reward: np.log(np.maximum(reward, 0)))
-        pass
     if normalize_observation:
         env = TransformObservation(
             env, lambda obs: np.log(np.maximum(obs, 0) + 1), env.observation_space
@@ -56,10 +54,8 @@ def env_builder(
 
 
 POLICY_KWARGS = dict(
-    net_arch=dict(pi=[256, 256], vf=[256, 256]),
+    net_arch=[256, 256],
     activation_fn=th.nn.ReLU,
-    ortho_init=False,
-    log_std_init=-2.0,
 )
 
 
@@ -68,14 +64,13 @@ def train_model(
     exp_name,
     device="auto",
     testing=False,
-    num_envs=5,
     num_frames=10,
     domain_randomization=True,
     normalize_reward=True,
     one_hot_action=True,
     normalize_observation=True,
     checkpoint=None,
-    learning_rate=3e-4,
+    learning_rate=1e-4,
 ):
     env = make_vec_env(
         partial(
@@ -86,8 +81,8 @@ def train_model(
             one_hot_action=one_hot_action,
             normalize_observation=normalize_observation,
         ),
-        n_envs=num_envs,
-        vec_env_cls=SubprocVecEnv if num_envs > 1 else None,
+        n_envs=1,  # DQN only supports single environment
+        vec_env_cls=DummyVecEnv,
     )
     env = VecNormalize(
         env,
@@ -98,17 +93,22 @@ def train_model(
         gamma=0.99,
         epsilon=1e-8,
     )
-    ppo_kwargs = dict(
-        batch_size=128,
-        n_steps=128,
-        n_epochs=10,
+
+    dqn_kwargs = dict(
         learning_rate=learning_rate,
-        gamma=0.999,
-        gae_lambda=0.98,
-        ent_coef=0.01,
-        # use_sde=True,
-        # sde_sample_freq=4,
+        buffer_size=100000,
+        learning_starts=1000,
+        batch_size=64,
+        tau=1.0,
+        gamma=0.99,
+        train_freq=4,
+        gradient_steps=1,
+        target_update_interval=1000,
+        exploration_fraction=0.1,
+        exploration_initial_eps=1.0,
+        exploration_final_eps=0.05,
     )
+
     checkpoint_path = ROOT_DIR / "checkpoints" / exp_name
     checkpoint_path.mkdir(parents=True, exist_ok=True)
     checkpoint_callback = CheckpointCallback(
@@ -116,7 +116,6 @@ def train_model(
         save_path=checkpoint_path,
         name_prefix="checkpoint",
         save_replay_buffer=True,
-        save_vecnormalize=True,
     )
 
     learn_kwargs = {}
@@ -124,33 +123,51 @@ def train_model(
         wandb.init(
             project="mva-rl-assignment-Butanium", name=exp_name, sync_tensorboard=True
         )
-        ppo_kwargs["tensorboard_log"] = f"logs/{exp_name}"
+        dqn_kwargs["tensorboard_log"] = f"logs/{exp_name}"
         learn_kwargs["callback"] = [WandbCallback(), checkpoint_callback]
-    model = PPO(
+
+    model = DQN(
         "MlpPolicy",
         env,
         verbose=1,
         device=device,
         policy_kwargs=POLICY_KWARGS,
-        **ppo_kwargs,
+        **dqn_kwargs,
     )
+
     if checkpoint is not None:
         print(f"Loading checkpoint from {checkpoint}")
-        model = PPO.load(checkpoint, env=env, device=device)
+        model = DQN.load(checkpoint, env=env, device=device)
+
     try:
         model.learn(total_timesteps=num_steps, progress_bar=True, **learn_kwargs)
     except Exception as e:
         print("Error during training")
-        # print traceback
         print(traceback.format_exc())
     finally:
         if not testing:
             print(f"Saving model to {exp_name}_{model.num_timesteps}")
             model.save(f"models/{exp_name}_{model.num_timesteps}")
-    return model
+    return model, env
 
-
-def test_model(model, n_eval_episodes=5, exp_name=None):
+@th.no_grad()
+def test_model(model, n_eval_episodes=5, exp_name=None, env=None):
+    if env is not None:
+        original_env = env
+        print("Evaluating model with original environment")
+        ep_rewards_deterministic, _ = evaluate_policy(
+            model, original_env, n_eval_episodes=n_eval_episodes, return_episode_rewards=True
+        )
+        print(
+            f"Mean reward (no randomization): {np.mean(ep_rewards_deterministic):.2e} +/- {np.std(ep_rewards_deterministic):.2e}"
+        )
+        print("evaluating with random sampling")
+        ep_rewards_random, _ = evaluate_policy(
+            model, original_env, n_eval_episodes=n_eval_episodes, return_episode_rewards=True, deterministic=False
+        )
+        print(
+            f"Mean reward (with random sampling): {np.mean(ep_rewards_random):.2e} +/- {np.std(ep_rewards_random):.2e}"
+        )
     env = env_builder(domain_randomization=False, normalize_reward=False)
     print("Evaluating model without domain randomization")
     ep_rewards_deterministic, _ = evaluate_policy(
@@ -169,30 +186,7 @@ def test_model(model, n_eval_episodes=5, exp_name=None):
         f"Mean reward (with randomization): {np.mean(ep_rewards_rnd_deterministic):.2e} +/- {np.std(ep_rewards_rnd_deterministic):.2e}"
     )
 
-    print("Evaluating model without domain randomization but deterministic")
-    ep_rewards_not_deterministic, _ = evaluate_policy(
-        model,
-        env,
-        n_eval_episodes=n_eval_episodes,
-        return_episode_rewards=True,
-        deterministic=False,
-    )
-    print(
-        f"Mean reward (no randomization) not deterministic: {np.mean(ep_rewards_not_deterministic):.2e} +/- {np.std(ep_rewards_not_deterministic):.2e}"
-    )
-
-    print("Evaluating model with domain randomization but deterministic")
-    ep_rewards_rnd_not_deterministic, _ = evaluate_policy(
-        model,
-        rnd_env,
-        n_eval_episodes=n_eval_episodes,
-        return_episode_rewards=True,
-        deterministic=False,
-    )
-    print(
-        f"Mean reward (with randomization) not deterministic: {np.mean(ep_rewards_rnd_not_deterministic):.2e} +/- {np.std(ep_rewards_rnd_not_deterministic):.2e}"
-    )
-    # 2x2 subplots with histograms of the episode rewards
+    # Create visualization
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
@@ -210,22 +204,6 @@ def test_model(model, n_eval_episodes=5, exp_name=None):
             name="With randomization",
         )
     )
-    fig.add_trace(
-        go.Scatter(
-            x=ep_rewards_not_deterministic,
-            y=2 * np.ones_like(ep_rewards_not_deterministic),
-            mode="markers",
-            name="No randomization not deterministic",
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=ep_rewards_rnd_not_deterministic,
-            y=3 * np.ones_like(ep_rewards_rnd_not_deterministic),
-            mode="markers",
-            name="With randomization not deterministic",
-        )
-    )
     fig.update_layout(showlegend=True)
     fig.write_html(f"plots/{exp_name}.html")
 
@@ -238,15 +216,15 @@ def simulate_model(model, exp_name):
     total_reward = 0
     all_rewards = []
     while not done and not truncated:
-        action = model.predict(obs, deterministic=False)[0]
+        action = model.predict(obs, deterministic=True)[0]
         obs, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
         all_rewards.append(reward)
     print(f"Total reward: {total_reward}")
-    plt.hist(
-        all_rewards, bins=30
-    )  # Increased the number of bins for better granularity
+    plt.figure()
+    plt.hist(all_rewards, bins=30)
     plt.savefig(f"plots/{exp_name}_rewards.png")
+    plt.close()
 
 
 if __name__ == "__main__":
@@ -257,11 +235,6 @@ if __name__ == "__main__":
         action="store_false",
         help="Disable domain randomization",
         dest="domain_randomization",
-    )
-    parser.add_argument(
-        "--exp-name",
-        type=str,
-        default="ppo_mlp_randomized_" + str(int(time())) + "_" + generate_slug(2),
     )
     parser.add_argument(
         "--no-normalize-reward", action="store_false", dest="normalize_reward"
@@ -276,17 +249,17 @@ if __name__ == "__main__":
     parser.add_argument("--num-steps", type=int, default=1_000_000)
     parser.add_argument("--testing", action="store_true")
     parser.add_argument("--device", type=str, default="auto")
-    parser.add_argument("--num-envs", type=int, default=5)
     parser.add_argument("--checkpoint", type=str, default=None)
-    parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--name", type=str, default=generate_slug(2))
     args = parser.parse_args()
     print(f"using {args}")
-    model = train_model(
+    
+    model, env = train_model(
         args.num_steps,
-        args.exp_name,
+        "dqn_mlp_" + str(int(time())) + "_" + args.name,
         device=args.device,
         testing=args.testing,
-        num_envs=args.num_envs,
         num_frames=args.num_frames,
         domain_randomization=args.domain_randomization,
         normalize_reward=args.normalize_reward,
@@ -295,5 +268,5 @@ if __name__ == "__main__":
         checkpoint=args.checkpoint,
         learning_rate=args.learning_rate,
     )
-    test_model(model, args.n_eval_episodes, args.exp_name)
-    simulate_model(model, args.exp_name)
+    test_model(model, args.n_eval_episodes, args.exp_name, env=env)
+    simulate_model(model, args.exp_name) 

@@ -1,8 +1,13 @@
 import gymnasium as gym
 import numpy as np
 from gymnasium.envs.registration import EnvSpec
+try:
+    from .env_hiv_fast import FastHIVPatient as HIVPatient
+except ImportError:
+    from env_hiv_fast import FastHIVPatient as HIVPatient
 
-class HIVPatient(gym.Env):
+
+class SlowHIVPatient(gym.Env):
     """HIV patient simulator
 
     Implements the simulator defined in 'Dynamic Multidrug Therapies for HIV: Optimal and STI Control Approaches' by Adams et al. (2004).
@@ -13,7 +18,7 @@ class HIVPatient(gym.Env):
     def __init__(
         self, clipping=True, logscale=False, domain_randomization: bool = False
     ):
-        super(HIVPatient, self).__init__()
+        super(SlowHIVPatient, self).__init__()
         self.spec = EnvSpec("HIVPatient-v0")
 
         self.domain_randomization = domain_randomization
