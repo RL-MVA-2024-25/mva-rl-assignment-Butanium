@@ -5,6 +5,7 @@ wandb
 plots
 checkpoints
 .conda
+.junk
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

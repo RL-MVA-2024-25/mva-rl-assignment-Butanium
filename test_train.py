@@ -95,7 +95,7 @@ def train_model(
         norm_reward=True,
         clip_obs=False,
         clip_reward=False,
-        gamma=0.99,
+        gamma=0.9999,
         epsilon=1e-8,
     )
     ppo_kwargs = dict(
@@ -103,7 +103,7 @@ def train_model(
         n_steps=128,
         n_epochs=10,
         learning_rate=learning_rate,
-        gamma=0.999,
+        gamma=0.9999,
         gae_lambda=0.98,
         ent_coef=0.01,
         # use_sde=True,

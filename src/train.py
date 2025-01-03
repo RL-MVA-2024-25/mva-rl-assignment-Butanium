@@ -49,43 +49,6 @@ def preprocess_observation(
     return np.stack(last_obs, axis=0), last_obs
 
 
-class LatestActionWrapper(Wrapper):
-    def __init__(self, env, default_action=0, one_hot_action=False):
-        super().__init__(env)
-        self.default_action = default_action
-        self.one_hot_action = one_hot_action
-        # Update observation space to include action
-        if one_hot_action:
-            low = np.concatenate(
-                [env.observation_space.low, np.zeros(env.action_space.n)]
-            )
-            high = np.concatenate(
-                [env.observation_space.high, np.ones(env.action_space.n)]
-            )
-        else:
-            low = np.append(env.observation_space.low, 0)
-            high = np.append(env.observation_space.high, env.action_space.n)
-        self.observation_space = gym.spaces.Box(
-            low=low, high=high, dtype=env.observation_space.dtype
-        )
-
-    def preprocess_action(self, action):
-        if self.one_hot_action:
-            actions = np.zeros(self.env.action_space.n)
-            actions[action] = 1
-            return actions
-        return np.array([action])
-
-    def reset(self, **kwargs):
-        obs, info = self.env.reset(**kwargs)
-        obs = np.concatenate([obs, self.preprocess_action(self.default_action)], axis=0)
-        return obs, info
-
-    def step(self, action):
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        obs = np.concatenate([obs, self.preprocess_action(action)], axis=0)
-        return obs, reward, terminated, truncated, info
-
 
 class ProjectAgent:
     def __init__(

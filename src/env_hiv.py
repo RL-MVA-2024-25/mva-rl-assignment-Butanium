@@ -1,10 +1,14 @@
 import gymnasium as gym
 import numpy as np
 from gymnasium.envs.registration import EnvSpec
-try:
-    from .env_hiv_fast import FastHIVPatient as HIVPatient
-except ImportError:
-    from env_hiv_fast import FastHIVPatient as HIVPatient
+
+def HIVPatient(*args):
+    try:
+        from .env_hiv_fast import FastHIVPatient
+    except ImportError:
+        from env_hiv_fast import FastHIVPatient
+
+    return FastHIVPatient(*args)
 
 
 class SlowHIVPatient(gym.Env):
@@ -18,7 +22,7 @@ class SlowHIVPatient(gym.Env):
     def __init__(
         self, clipping=True, logscale=False, domain_randomization: bool = False
     ):
-        super(SlowHIVPatient, self).__init__()
+        super().__init__()
         self.spec = EnvSpec("HIVPatient-v0")
 
         self.domain_randomization = domain_randomization

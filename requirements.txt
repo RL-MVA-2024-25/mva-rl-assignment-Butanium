@@ -12,3 +12,4 @@ plotly
 matplotlib
 rich
 tqdm
+scipy
