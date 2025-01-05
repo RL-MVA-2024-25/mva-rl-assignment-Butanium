@@ -262,6 +262,24 @@ class FastHIVPatient(gym.Env):
 
         return slow_env
 
+    def greedy_action(self, consecutive_actions=1, num_watch_steps=5):
+        rewards = []
+        for action in range(4):
+            env_copy = self.clone()
+            action_reward = 0
+            cum_reward = 0
+            for _ in range(consecutive_actions):
+                _, reward, _, _, _ = env_copy.step(action)
+                action_reward += reward
+                cum_reward += reward
+            for _ in range(num_watch_steps):
+                _, reward, _, _, _ = env_copy.step(0)
+                action_reward += reward
+                cum_reward += reward
+            rewards.append(cum_reward)
+        best_action = int(np.argmax(rewards))
+        return best_action
+
 
 def test_env_speedup():
     """Measure speedup of fast implementation over slow implementation."""
