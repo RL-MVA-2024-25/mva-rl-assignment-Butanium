@@ -15,14 +15,17 @@ from imitation.data.rollout import (
     unwrap_traj,
     dataclasses,
 )
+from imitation.util.logger import configure as configure_logger
+from imitation.util.util import save_policy
 from imitation.data import rollout
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 import numpy as np
-from gymnasium.wrappers import TimeLimit
+from gymnasium.wrappers import TimeLimit, TransformObservation
 from coolname import generate_slug
 from tqdm.rich import trange, tqdm
+import wandb
 
 from src.env_hiv_fast import FastHIVPatient
 
@@ -38,6 +41,17 @@ class DoOnce:
         return False
 
 
+def build_env(domain_randomization: bool):
+    env = FastHIVPatient(domain_randomization=domain_randomization)
+    env = TransformObservation(
+        env,
+        lambda obs: np.log(np.maximum(obs, 1e-8)),
+        env.observation_space,
+    )
+    env = TimeLimit(env, max_episode_steps=200)
+    return env
+
+
 def generate_heuristic_rollouts(
     add_fixed_env: bool,
     n_envs: int,
@@ -45,17 +59,13 @@ def generate_heuristic_rollouts(
     rng: np.random.Generator,
 ) -> types.TrajectoryWithRew:
     all_trajectories = []
-    do_once = DoOnce(add_fixed_env)
 
     for _ in trange(0, num_rollouts, n_envs, desc="Generating rollouts"):
         venv = make_vec_env(
-            lambda *, _do_once: TimeLimit(
-                FastHIVPatient(domain_randomization=_do_once()),
-                max_episode_steps=200,
-            ),
+            lambda *, _do_once: build_env(_do_once()),
             n_envs=n_envs,
             vec_env_cls=SubprocVecEnv,
-            env_kwargs=dict(_do_once=do_once),
+            env_kwargs=dict(_do_once=DoOnce(add_fixed_env)),
         )
         sample_until = make_sample_until(min_episodes=n_envs)
         # Collect rollout tuples.
@@ -163,36 +173,50 @@ def generate_heuristic_rollouts(
     return trajectories
 
 
-def main(num_rollouts: int, num_envs: int, exp_name: str, add_fixed_env: bool = True):
+def main(
+    num_rollouts: int,
+    num_envs: int,
+    exp_name: str,
+    add_fixed_env: bool = True,
+    device: str = "auto",
+    rollout_path: Path | None = None,
+    n_epochs: int = 5,
+):
     rng = np.random.default_rng()
-    rollouts = generate_heuristic_rollouts(
-        add_fixed_env, num_envs, num_rollouts, rng=rng
-    )
-    save_path = Path("data/rollouts") / (exp_name + "_" + str(num_rollouts) + ".traj")
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    serialize.save(save_path, rollouts)
-    print(f"Saved rollouts to {save_path}")
-    transistions = rollout.flatten_trajectories(rollouts)
+    if rollout_path is None:
+        rollouts = generate_heuristic_rollouts(
+            add_fixed_env, num_envs, num_rollouts, rng=rng
+        )
+        save_path = Path("data/rollouts") / (
+            exp_name + "_" + str(num_rollouts) + ".traj"
+        )
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        serialize.save(save_path, rollouts)
+        print(f"Saved rollouts to {save_path}")
+    else:
+        rollouts = serialize.load(rollout_path)
+        print(f"Loaded rollouts from {rollout_path}")
+    transitions = rollout.flatten_trajectories(rollouts)
     env = make_vec_env(
-        lambda: TimeLimit(
-            FastHIVPatient(domain_randomization=True), max_episode_steps=200
-        ),
+        lambda: build_env(domain_randomization=True),
         n_envs=num_envs,
     )
     det_env = make_vec_env(
-        lambda: TimeLimit(
-            FastHIVPatient(domain_randomization=False), max_episode_steps=200
-        ),
+        lambda: build_env(domain_randomization=False),
         n_envs=num_envs,
     )
     dummy_env = FastHIVPatient(domain_randomization=False)
     bc_trainer = bc.BC(
         observation_space=dummy_env.observation_space,
         action_space=dummy_env.action_space,
-        demonstrations=transistions,
+        demonstrations=transitions,
         rng=rng,
+        device=device,
+        custom_logger=configure_logger(
+            folder=Path("logs") / exp_name, format_strs=["wandb", "log"]
+        ),
     )
-    bc_trainer.train(n_epochs=5)
+    bc_trainer.train(n_epochs=n_epochs)
     mean_reward, std_reward = evaluate_policy(
         bc_trainer.policy, env, n_eval_episodes=10
     )
@@ -204,21 +228,29 @@ def main(num_rollouts: int, num_envs: int, exp_name: str, add_fixed_env: bool = 
     # save policy
     save_path = Path("models/bc") / (exp_name + "_" + str(num_rollouts) + ".pkl")
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    bc_trainer.save(save_path)
+    save_policy(bc_trainer.policy, save_path)
+    # bc_trainer.save_policy(save_path)
     print(f"Saved policy to {save_path}")
 
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--num-rollouts", type=int, default=100)
+    parser.add_argument("--num-rollouts", type=int, default=1000)
     parser.add_argument("--num-envs", type=int, default=8)
     parser.add_argument("--no-fixed-env", action="store_false", dest="add_fixed_env")
+    parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--rollout-path", "-p", type=Path, default=None)
+    parser.add_argument("--n-epochs", type=int, default=5)
     args = parser.parse_args()
     exp_name = str(int(time.time())) + "_" + generate_slug(2)
     print(f"Experiment name: {exp_name}")
+    wandb.init(project="hiv-imitation", name=exp_name, sync_tensorboard=True)
     main(
         num_rollouts=args.num_rollouts,
         num_envs=args.num_envs,
         exp_name=exp_name,
         add_fixed_env=args.add_fixed_env,
+        device=args.device,
+        rollout_path=args.rollout_path,
+        n_epochs=args.n_epochs,
     )
