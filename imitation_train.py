@@ -2,6 +2,7 @@ import time
 from argparse import ArgumentParser
 from dataclasses import dataclass
 from pathlib import Path
+import json
 
 from imitation.algorithms import bc
 from imitation.data import serialize
@@ -173,6 +174,125 @@ def generate_heuristic_rollouts(
     return trajectories
 
 
+def validation_step_on_epoch(
+    bc_trainer: bc.BC,
+    num_envs: int,
+    exp_name: str,
+    repeat_idx: int,
+    best_score: float,
+    best_random_reward: float,
+    best_deterministic_reward: float,
+):
+    def callback():
+        env = make_vec_env(
+            lambda: build_env(domain_randomization=True),
+            n_envs=num_envs,
+        )
+        det_env = make_vec_env(
+            lambda: build_env(domain_randomization=False),
+            n_envs=num_envs,
+        )
+        mean_reward, std_reward = evaluate_policy(
+            bc_trainer.policy, env, n_eval_episodes=20
+        )
+        det_mean_reward, det_std_reward = evaluate_policy(
+            bc_trainer.policy, det_env, n_eval_episodes=10
+        )
+        print("-" * 5 + f"Epoch {callback.epoch} - Validation step" + "-" * 5)
+        print(f"Random env reward: {mean_reward:.2e} ± {std_reward:.2e}")
+        print(f"Deterministic env reward: {det_mean_reward:.2e} ± {det_std_reward:.2e}")
+        mean_reward_sample, std_reward_sample = evaluate_policy(
+            bc_trainer.policy, env, n_eval_episodes=20, deterministic=False
+        )
+        print(
+            f"Random env reward (sample): {mean_reward_sample:.2e} ± {std_reward_sample:.2e}"
+        )
+        det_mean_reward_sample, det_std_reward_sample = evaluate_policy(
+            bc_trainer.policy, det_env, n_eval_episodes=20, deterministic=False
+        )
+        print(
+            f"Deterministic env reward (sample): {det_mean_reward_sample:.2e} ± {det_std_reward_sample:.2e}"
+        )
+        print("-" * 20)
+        wandb.log(
+            {
+                "validation/rnd_env_reward": mean_reward,
+                "validation/det_env_reward": det_mean_reward,
+                "validation/rnd_env_reward_sample": mean_reward_sample,
+                "validation/det_env_reward_sample": det_mean_reward_sample,
+            },
+            commit=False,
+        )
+        score = calculate_score(mean_reward, det_mean_reward)
+        score_sample = calculate_score(mean_reward_sample, det_mean_reward_sample)
+        if max(score, score_sample) > callback.best_score or (
+            mean_reward > callback.best_random_reward
+            and det_mean_reward > callback.best_deterministic_reward
+        ):
+            save_path = Path("models/bc") / exp_name
+            save_path.mkdir(parents=True, exist_ok=True)
+            improves_score = max(score, score_sample) > callback.best_score
+            callback.best_score = max(score, score_sample)
+            callback.best_random_reward = mean_reward
+            callback.best_deterministic_reward = det_mean_reward
+            save_policy(
+                bc_trainer.policy,
+                save_path / f"repeat_{repeat_idx}_best.pkl",
+            )
+            with open(
+                save_path / f"repeat_{repeat_idx}_best_info.json",
+                "w",
+            ) as f:
+                json.dump(
+                    {
+                        "score": score,
+                        "score_sample": score_sample,
+                        "epoch": callback.epoch,
+                        "improved score": improves_score,
+                    },
+                    f,
+                )
+        wandb.log(
+            {
+                "validation/score": score,
+                "validation/score_sample": score_sample,
+                "validation/best_score": callback.best_score,
+                "validation/best_random_reward": callback.best_random_reward,
+                "validation/best_deterministic_reward": callback.best_deterministic_reward,
+            }
+        )
+        callback.epoch += 1
+
+    callback.epoch = 0
+    callback.best_score = best_score
+    callback.best_random_reward = best_random_reward
+    callback.best_deterministic_reward = best_deterministic_reward
+    return callback
+
+
+def calculate_score(random_env_reward: float, deterministic_env_reward: float):
+    score = 0
+    if deterministic_env_reward >= 3432807.680391572:
+        score += 1
+    if deterministic_env_reward >= 1e8:
+        score += 1
+    if deterministic_env_reward >= 1e9:
+        score += 1
+    if deterministic_env_reward >= 1e10:
+        score += 1
+    if deterministic_env_reward >= 2e10:
+        score += 1
+    if deterministic_env_reward >= 5e10:
+        score += 1
+    if random_env_reward >= 1e10:
+        score += 1
+    if random_env_reward >= 2e10:
+        score += 1
+    if random_env_reward >= 5e10:
+        score += 1
+    return score
+
+
 def main(
     num_rollouts: int,
     num_envs: int,
@@ -181,6 +301,7 @@ def main(
     device: str = "auto",
     rollout_path: Path | None = None,
     n_epochs: int = 5,
+    n_repeats: int = 1,
 ):
     rng = np.random.default_rng()
     if rollout_path is None:
@@ -206,29 +327,49 @@ def main(
         n_envs=num_envs,
     )
     dummy_env = FastHIVPatient(domain_randomization=False)
-    bc_trainer = bc.BC(
-        observation_space=dummy_env.observation_space,
-        action_space=dummy_env.action_space,
-        demonstrations=transitions,
-        rng=rng,
-        device=device,
-        custom_logger=configure_logger(
-            folder=Path("logs") / exp_name, format_strs=["wandb", "log"]
-        ),
-    )
-    bc_trainer.train(n_epochs=n_epochs)
-    mean_reward, std_reward = evaluate_policy(
-        bc_trainer.policy, env, n_eval_episodes=10
-    )
-    det_mean_reward, det_std_reward = evaluate_policy(
-        bc_trainer.policy, det_env, n_eval_episodes=10
-    )
-    print(f"Reward: {mean_reward:.2e} ± {std_reward:.2e}")
-    print(f"Det env reward: {det_mean_reward:.2e} ± {det_std_reward:.2e}")
-    # save policy
-    save_path = Path("models/bc") / (exp_name + "_" + str(num_rollouts) + ".pkl")
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    save_policy(bc_trainer.policy, save_path)
+    best_score = 0
+    best_random_reward = 0
+    best_deterministic_reward = 0
+    for i in range(n_repeats):
+        wandb.log({"num_repeat": i}, commit=False)
+        bc_trainer = bc.BC(
+            observation_space=dummy_env.observation_space,
+            action_space=dummy_env.action_space,
+            demonstrations=transitions,
+            rng=rng,
+            device=device,
+            custom_logger=configure_logger(
+                folder=Path("logs") / exp_name, format_strs=["wandb", "log"]
+            ),
+        )
+        callback = validation_step_on_epoch(
+            bc_trainer,
+            num_envs,
+            exp_name,
+            i,
+            best_score,
+            best_random_reward,
+            best_deterministic_reward,
+        )
+        bc_trainer.train(
+            n_epochs=n_epochs,
+            on_epoch_end=callback,
+        )
+        mean_reward, std_reward = evaluate_policy(
+            bc_trainer.policy, env, n_eval_episodes=10
+        )
+        det_mean_reward, det_std_reward = evaluate_policy(
+            bc_trainer.policy, det_env, n_eval_episodes=10
+        )
+        print(f"Reward: {mean_reward:.2e} ± {std_reward:.2e}")
+        print(f"Det env reward: {det_mean_reward:.2e} ± {det_std_reward:.2e}")
+        best_score = callback.best_score
+        best_random_reward = callback.best_random_reward
+        best_deterministic_reward = callback.best_deterministic_reward
+        # save policy
+        save_path = Path("models/bc") / exp_name / f"final_{i}_{num_rollouts}.pkl"
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        save_policy(bc_trainer.policy, save_path)
     # bc_trainer.save_policy(save_path)
     print(f"Saved policy to {save_path}")
 
@@ -241,8 +382,10 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--rollout-path", "-p", type=Path, default=None)
     parser.add_argument("--n-epochs", type=int, default=5)
+    parser.add_argument("--n-repeats", type=int, default=1)
+    parser.add_argument("--name", default=generate_slug(2))
     args = parser.parse_args()
-    exp_name = str(int(time.time())) + "_" + generate_slug(2)
+    exp_name = str(int(time.time())) + "_" + args.name
     print(f"Experiment name: {exp_name}")
     wandb.init(project="hiv-imitation", name=exp_name, sync_tensorboard=True)
     main(
@@ -253,4 +396,5 @@ if __name__ == "__main__":
         device=args.device,
         rollout_path=args.rollout_path,
         n_epochs=args.n_epochs,
+        n_repeats=args.n_repeats,
     )
