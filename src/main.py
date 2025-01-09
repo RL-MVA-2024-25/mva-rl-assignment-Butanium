@@ -31,9 +31,9 @@ if __name__ == "__main__":
         seed_everything(seed=42)
         # Initialization of the agent. Replace DummyAgent with your custom agent implementation.
         agent = ProjectAgent(
-            use_lstm=args.use_lstm,
-            model_name=args.model_name,
-            deterministic=args.deterministic,
+            # use_lstm=args.use_lstm,
+            # model_name=args.model_name,
+            # deterministic=args.deterministic,
         )
         agent.load()
         # Evaluate agent and write score.

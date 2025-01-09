@@ -2,13 +2,14 @@ import gymnasium as gym
 import numpy as np
 from gymnasium.envs.registration import EnvSpec
 
-def HIVPatient(*args):
-    try:
-        from .env_hiv_fast import FastHIVPatient
-    except ImportError:
-        from env_hiv_fast import FastHIVPatient
+def HIVPatient(*args, **kwargs):
+    return SlowHIVPatient(*args, **kwargs)
+    # try:
+    #     from .env_hiv_fast import FastHIVPatient
+    # except ImportError:
+    #     from env_hiv_fast import FastHIVPatient
 
-    return FastHIVPatient(*args)
+    # return FastHIVPatient(*args, **kwargs)
 
 
 class SlowHIVPatient(gym.Env):

@@ -64,3 +64,5 @@ def test_expected_result_dr_env_5e10():
         lines = [float(line.rstrip()) for line in file]
     dr_env_performance = lines[1]
     assert dr_env_performance >= 5e10
+
+

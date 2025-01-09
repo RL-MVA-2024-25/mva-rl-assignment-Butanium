@@ -10,9 +10,10 @@ from stable_baselines3 import PPO
 from sb3_contrib import RecurrentPPO
 from pathlib import Path
 import numpy as np
+import torch as th
 
 SAVE_PATH = Path(__file__).parent.parent / "models"
-MODEL_NAME = "ppo_hiv_lstm"
+MODEL_NAME = "bc/1736296610_dazzling-panda/repeat_0_best.pkl"
 env = TimeLimit(
     env=HIVPatient(domain_randomization=False), max_episode_steps=200
 )  # The time wrapper limits the number of steps in an episode at 200.
@@ -49,8 +50,7 @@ def preprocess_observation(
     return np.stack(last_obs, axis=0), last_obs
 
 
-
-class ProjectAgent:
+class OldProjectAgent:
     def __init__(
         self,
         use_lstm=True,
@@ -137,3 +137,18 @@ class ProjectAgent:
                 self.last_state = None
             else:
                 self.model = PPO.load(SAVE_PATH / self.model_name)
+
+
+from imitation.algorithms import bc
+
+
+class ProjectAgent:
+    def act(self, observation, use_random=False):
+        observation = np.log(np.maximum(observation, 1e-8))
+        return self.policy.predict(observation, deterministic=True)[0]
+
+    def save(self, path):
+        th.save(self.policy, path)
+
+    def load(self):
+        self.policy = th.load(SAVE_PATH / MODEL_NAME, weights_only=False)
