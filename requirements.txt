@@ -13,5 +13,5 @@ matplotlib
 rich
 tqdm
 scipy
-numbae
+numba
 imitation
