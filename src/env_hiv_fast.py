@@ -4,9 +4,9 @@ from gymnasium.envs.registration import EnvSpec
 from numba import jit
 
 try:
-    from .env_hiv import SlowHIVPatient
+    from .env_hiv import HIVPatient as SlowHIVPatient
 except ImportError:
-    from env_hiv import SlowHIVPatient
+    from env_hiv import HIVPatient as SlowHIVPatient
 
 
 @jit(nopython=True)

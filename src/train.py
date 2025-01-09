@@ -29,7 +29,7 @@ from coolname import generate_slug
 from tqdm.rich import trange, tqdm
 import wandb
 
-from src.env_hiv_fast import FastHIVPatient
+from env_hiv_fast import FastHIVPatient
 
 DISABLE_WANDB = True
 
@@ -416,7 +416,7 @@ def train():
 # ENJOY!
 
 SAVE_PATH = Path(__file__).parent.parent / "models"
-MODEL_NAME = "bc/1736296610_dazzling-panda/repeat_0_best.pkl"
+MODEL_NAME = "bc/repeat_0_best.pkl"
 
 
 class ProjectAgent:
