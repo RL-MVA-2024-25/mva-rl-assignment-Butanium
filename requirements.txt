@@ -3,7 +3,7 @@ gymnasium>=0.29.1
 numpy >=1.21.0
 scikit-learn>=1.4.0
 pytest
-wandb
+# wandb
 sb3-contrib
 tqdm
 tensorboard
@@ -13,5 +13,5 @@ matplotlib
 rich
 tqdm
 scipy
-numba
+numbae
 imitation

@@ -27,11 +27,13 @@ import numpy as np
 from gymnasium.wrappers import TimeLimit, TransformObservation
 from coolname import generate_slug
 from tqdm.rich import trange, tqdm
-import wandb
+
+try:
+    import wandb
+except ImportError:
+    DISABLE_WANDB = True
 
 from env_hiv_fast import FastHIVPatient
-
-DISABLE_WANDB = True
 
 
 @dataclass
